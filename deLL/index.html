@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LekhaRx | Clinical workspace</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <a class="brand" href="index.html"><span class="brand-mark">+</span><span>LekhaRx</span></a>
+    <div class="nav-links"><a class="active" href="index.html">Workspace</a><a href="audit.html">Audit history</a><a href="#safety">Safety</a></div>
+    <div class="profile"><span class="avatar">DS</span><span>Dr. Sharma</span><span class="chevron">v</span></div>
+  </nav>
+  <main>
+    <section class="workspace-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">CLINICAL WORKSPACE / MONDAY, 27 SEP 2026</p>
+        <h1>From handwritten care<br><em>to trusted records.</em></h1>
+        <p class="hero-description">Convert prescriptions, OPD cards, case sheets and discharge summaries into structured records with field-level confidence and human approval.</p>
+        <div class="workflow"><span class="workflow-step current"><b>01</b> Capture</span><i>-></i><span class="workflow-step"><b>02</b> Extract</span><i>-></i><span class="workflow-step"><b>03</b> Verify</span><i>-></i><span class="workflow-step"><b>04</b> Commit</span></div>
+      </div>
+      <section class="upload-card" aria-label="Upload clinical document">
+        <div class="card-heading"><span class="icon-box">&#9633;</span><div><p class="eyebrow">START A NEW RECORD</p><h2>New clinical document</h2></div></div>
+        <label class="select-label" for="document-type">Document type</label>
+        <select id="document-type"><option>Prescription</option><option>OPD visit record</option><option>Clinical case sheet</option><option>Discharge summary</option></select>
+        <label id="drop-zone" class="drop-zone" for="document-file"><span class="upload-symbol">&#8593;</span><strong>Drop a document here</strong><span>or choose a file from your device</span><small>JPG, PNG or PDF up to 10 MB</small><input id="document-file" type="file" accept="image/*,.pdf"></label>
+        <div class="upload-actions"><button id="camera-button" class="button button-secondary" type="button">&#9673; Camera</button><button id="upload-button" class="button button-primary" type="button">Choose file <span>-></span></button></div>
+        <p id="upload-status" class="upload-note">Secure local preview. Nothing is committed without review.</p>
+      </section>
+    </section>
+    <section class="trust-bar"><div><strong>Field-level confidence</strong><span>Every extracted field is scored</span></div><div><strong>No guessing</strong><span>Ambiguity is surfaced, never hidden</span></div><div><strong>Human approval</strong><span>Clinician remains in control</span></div><div><strong>Full audit trail</strong><span>Original records stay preserved</span></div></section>
+    <section id="safety" class="process-section"><div class="section-intro"><p class="eyebrow">THE CLINICAL WORKFLOW</p><h2>Four steps from paper<br>to a verified record.</h2><p>Every stage is designed around accuracy, transparency and clinician control.</p></div><div class="step-grid"><article><span>01 / CAPTURE</span><h3>Bring the source in.</h3><p>Upload a photograph or scanned image of a clinical document.</p></article><article><span>02 / EXTRACT</span><h3>Structure the signal.</h3><p>Handwritten information becomes editable clinical fields.</p></article><article><span>03 / VERIFY</span><h3>See what needs attention.</h3><p>Low-confidence or ambiguous fields are highlighted for review.</p></article><article><span>04 / COMMIT</span><h3>Preserve the decision.</h3><p>Approved information is linked to the patient record and versioned.</p></article></div></section>
+    <section class="safety-section"><div><p class="eyebrow eyebrow-light">TRUST &amp; SAFETY</p><h2>AI that knows when<br><em>not to guess.</em></h2><p>Medical information cannot be treated like ordinary text. LekhaRx separates extraction from approval and flags uncertainty instead of silently inventing missing data.</p></div><div class="confidence-panel"><div><span>Medicine</span><b class="good">96% confident</b></div><div><span>Dosage</span><b class="good">94% confident</b></div><div><span>Diagnosis</span><b class="good">91% confident</b></div><div><span>Follow-up</span><b class="warn">Verify required</b></div></div></section>
+  </main>
+  <footer class="site-footer"><span>© 2026 LekhaRx</span><span>AI-assisted / clinician verified / auditable</span></footer>
+  <script src="script.js"></script>
+</body>
+</html>
