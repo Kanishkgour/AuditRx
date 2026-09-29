@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, CheckCircle2, FileText, Stethoscope, Upload, Volume2, X } from 'lucide-react';
+import { AlertTriangle, Camera, FileText, Stethoscope, Upload, X } from 'lucide-react';
 import './App.css';
 
 const documentTypes = [
@@ -10,28 +10,50 @@ const documentTypes = [
   { value: 'discharge_summary', label: 'Discharge summary' }
 ];
 
-const textFields = [
-  ['patientName', 'Patient name'],
-  ['patientAge', 'Age'],
-  ['patientGender', 'Gender'],
-  ['patientId', 'Patient ID'],
-  ['doctorOrHospital', 'Doctor / hospital'],
-  ['documentDate', 'Document date'],
-  ['diagnosis', 'Diagnosis'],
-  ['symptoms', 'Symptoms'],
-  ['followUp', 'Follow-up'],
-  ['clinicalNotes', 'Clinical notes']
-];
+const commonMedicalTerms = ['WBC', 'RBC', 'HGB', 'HCT', 'RDW', 'PDW', 'MPV'];
 
 export default function App() {
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState(null);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [extractionResult, setExtractionResult] = useState(null);
+  const [extracting, setExtracting] = useState(false);
+  const [summaryResult, setSummaryResult] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [medicalTerms, setMedicalTerms] = useState([]);
+  const [medicineInformation, setMedicineInformation] = useState({});
+  const [medicineLoading, setMedicineLoading] = useState({});
   const [preview, setPreview] = useState(null);
   const [documentType, setDocumentType] = useState('prescription');
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const videoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+
+  useEffect(() => () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  useEffect(() => {
+    if (!extractionResult) {
+      setMedicalTerms([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+    Promise.all(commonMedicalTerms.map((term) => axios.get(`${apiUrl}/api/medical-terms/${term}`)))
+      .then((responses) => {
+        if (!cancelled) setMedicalTerms(responses.map((response) => response.data));
+      })
+      .catch(() => {
+        if (!cancelled) setMedicalTerms(commonMedicalTerms.map((term) => ({ originalTerm: term, expandedTerm: 'Information unavailable', simpleMeaning: 'Information unavailable', whyDoctorsLookAtIt: 'Information unavailable', informationAvailable: false })));
+      });
+
+    return () => { cancelled = true; };
+  }, [extractionResult]);
 
   const handleFileUpload = (event) => {
     const file = event.target.files?.[0];
@@ -41,7 +63,11 @@ export default function App() {
   const processFile = (file) => {
     if (!file) return;
     setError('');
-    setData(null);
+    setUploadResult(null);
+    setExtractionResult(null);
+    setSummaryResult(null);
+    setMedicalTerms([]);
+    setMedicineInformation({});
 
     if (!file.type.startsWith('image/')) {
       setError('Please choose a JPG, PNG, WEBP, or other image file.');
@@ -61,38 +87,159 @@ export default function App() {
         setError('The document could not be previewed. Please try another image.');
         return;
       }
-      const base64String = reader.result.split(',')[1];
       setPreview(reader.result);
-      processPrescription(base64String, file.type);
+      uploadDocument(file);
     };
     reader.onerror = () => setError('The document could not be read. Please try again.');
     reader.readAsDataURL(file);
   };
 
-  const processPrescription = async (base64, mimeType) => {
+  const uploadDocument = async (file) => {
     setLoading(true);
     setError('');
     try {
-      const res = await axios.post('http://localhost:5000/api/scan', {
-        imageBase64: base64,
-        mimeType: mimeType || 'image/jpeg',
-        documentType
-      });
-      setData(res.data);
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('documentType', documentType);
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const res = await axios.post(`${apiUrl}/api/documents`, formData);
+      setUploadResult(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Scanning failed. Check that the backend is running and try again.');
+      setError(err.response?.data?.error || 'Upload failed. Check that the backend is running and try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const playHindiVoice = () => {
-    if (!data?.hindiSummary) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(data.hindiSummary);
-    utterance.lang = 'hi-IN';
-    utterance.rate = 0.9;
-    window.speechSynthesis.speak(utterance);
+  const extractDocument = async () => {
+    if (!uploadResult?.documentId) return;
+    setExtracting(true);
+    setError('');
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const res = await axios.post(`${apiUrl}/api/documents/${uploadResult.documentId}/extract`, {
+        documentType: uploadResult.documentType
+      });
+      setExtractionResult(res.data);
+    } catch (err) {
+      setError(err.response?.data?.error || 'AI extraction failed. Please try again.');
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const generatePatientSummary = async () => {
+    if (!uploadResult?.documentId || !extractionResult?.extraction) return;
+    setSummaryLoading(true);
+    setError('');
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const summaryResponse = await axios.post(`${apiUrl}/api/documents/${uploadResult.documentId}/summary`, {
+        documentType: uploadResult.documentType,
+        extraction: extractionResult.extraction
+      });
+      const eligibleMedicines = extractionResult.extraction.medicines?.filter((medicine) => (
+        medicine.name?.originalValue && medicine.name.confidence >= 80 && !medicine.name.needsVerification
+      )) || [];
+      const medicineEntries = await Promise.all(eligibleMedicines.map(async (medicine) => {
+        const medicineName = medicine.name.originalValue;
+        const medicineKey = medicineName.toLowerCase();
+        try {
+          const response = await axios.post(`${apiUrl}/api/medicines/information`, {
+            medicineName,
+            confidence: medicine.name.confidence,
+            needsVerification: medicine.name.needsVerification
+          });
+          return [medicineKey, response.data];
+        } catch (err) {
+          return [medicineKey, err.response?.data || { commonUse: 'Information unavailable' }];
+        }
+      }));
+      setMedicineInformation((current) => ({ ...current, ...Object.fromEntries(medicineEntries) }));
+      setSummaryResult(summaryResponse.data);
+    } catch (err) {
+      setError(err.response?.data?.error || 'The patient-friendly summary could not be generated. Please try again.');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const lookupMedicineInformation = async (medicine) => {
+    const medicineName = medicine.name?.originalValue;
+    if (!medicineName) return;
+
+    const medicineKey = medicineName.toLowerCase();
+    setMedicineLoading((current) => ({ ...current, [medicineKey]: true }));
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const res = await axios.post(`${apiUrl}/api/medicines/information`, {
+        medicineName,
+        confidence: medicine.name?.confidence,
+        needsVerification: medicine.name?.needsVerification
+      });
+      setMedicineInformation((current) => ({ ...current, [medicineKey]: res.data }));
+    } catch (err) {
+      setMedicineInformation((current) => ({
+        ...current,
+        [medicineKey]: err.response?.data || {
+          originalTerm: medicineName,
+          expandedTerm: 'Information unavailable',
+          simpleMeaning: 'Information unavailable',
+          whyDoctorsLookAtIt: 'Information unavailable',
+          informationAvailable: false
+        }
+      }));
+    } finally {
+      setMedicineLoading((current) => ({ ...current, [medicineKey]: false }));
+    }
+  };
+
+  const stopCamera = () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setCameraOpen(false);
+  };
+
+  const startCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError('Camera capture is not available in this browser. Choose an image file instead.');
+      return;
+    }
+
+    try {
+      setError('');
+      cameraStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false
+      });
+      setCameraOpen(true);
+      requestAnimationFrame(() => {
+        if (videoRef.current) videoRef.current.srcObject = cameraStreamRef.current;
+      });
+    } catch {
+      setError('Camera permission was denied or the camera is unavailable. Choose an image file instead.');
+    }
+  };
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video?.videoWidth || !video.videoHeight) {
+      setError('The camera is not ready yet. Please try again.');
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setError('The camera image could not be created. Please try again.');
+        return;
+      }
+      stopCamera();
+      processFile(new File([blob], `camera-${Date.now()}.jpg`, { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.92);
   };
 
   const handleDrop = (event) => {
@@ -134,7 +281,11 @@ export default function App() {
               disabled={loading}
               onChange={(event) => {
                 setDocumentType(event.target.value);
-                setData(null);
+                setUploadResult(null);
+                setExtractionResult(null);
+                setSummaryResult(null);
+                setMedicalTerms([]);
+                setMedicineInformation({});
                 setError('');
               }}
             >
@@ -157,15 +308,21 @@ export default function App() {
 
             {preview && (
               <div className="source-preview">
-                <div className="preview-heading"><span>Source document</span><button type="button" onClick={() => { setPreview(null); setFileName(''); setData(null); }} aria-label="Remove selected document"><X size={14} /></button></div>
+                <div className="preview-heading"><span>Source document</span><button type="button" onClick={() => { setPreview(null); setFileName(''); setUploadResult(null); setExtractionResult(null); setSummaryResult(null); setMedicalTerms([]); setMedicineInformation({}); }} aria-label="Remove selected document"><X size={14} /></button></div>
                 <img src={preview} alt={`${fileName || 'Clinical document'} preview`} />
               </div>
             )}
 
-            <div className="upload-actions"><button className="button button-secondary" type="button" onClick={() => fileInputRef.current?.click()}>Choose file</button><button className="button button-primary" type="button" onClick={() => fileInputRef.current?.click()}>Capture / upload <span>→</span></button></div>
+            <div className="upload-actions"><button className="button button-secondary" type="button" onClick={() => fileInputRef.current?.click()}>Choose file</button><button className="button button-primary" type="button" onClick={startCamera}><Camera size={16} /> Capture / upload <span>→</span></button></div>
+            {cameraOpen && (
+              <div className="camera-panel">
+                <video ref={videoRef} autoPlay playsInline aria-label="Camera preview" />
+                <div className="camera-actions"><button className="button button-secondary" type="button" onClick={stopCamera}>Cancel</button><button className="button button-primary" type="button" onClick={capturePhoto}>Take photo</button></div>
+              </div>
+            )}
             {fileName && <p className="file-name">{fileName}</p>}
             {loading && (
-              <p className="processing-note">Extracting the selected record with Gemini...</p>
+              <p className="processing-note">Uploading the document securely...</p>
             )}
             {error && <div className="error-note" role="alert"><AlertTriangle size={15} /><span>{error}</span></div>}
             {!loading && !error && <p className="upload-note">Secure processing. Nothing becomes a record without review.</p>}
@@ -178,74 +335,56 @@ export default function App() {
         <section className="review-area">
           <div className="section-heading"><p className="eyebrow">STRUCTURED EXTRACTION / CLINICIAN REVIEW</p><h2>Review every field<br />before it becomes a record.</h2><p>AI drafts the structure. You make the clinical decision.</p></div>
           <div className="extraction-panel">
-          {data ? (
+          {uploadResult ? (
             <div className="extraction-card">
               <div className="extraction-header">
                 <div>
-                  <p className="eyebrow">DRAFT EXTRACTION</p>
-                  <h3>{documentTypes.find((type) => type.value === documentType)?.label}</h3>
-                  <p>Verify flagged or low-confidence fields before approving this record.</p>
+                  <p className="eyebrow">DOCUMENT UPLOADED</p>
+                  <h3>{uploadResult.originalName}</h3>
+                  <p>The source is stored and ready for the clinical extraction step.</p>
                 </div>
-                <button onClick={playHindiVoice} className="button button-secondary voice-button">
-                  <Volume2 className="w-4 h-4" /> हिंदी में सुनें
-                </button>
+                <span className="upload-status-badge">Ready for extraction</span>
               </div>
-
-              <div className="field-grid">
-                {textFields.map(([key, label]) => {
-                  const confidence = data.confidence?.[key] ?? 0;
-                  const needsReview = confidence < 80;
-                  return (
-                    <label key={key} className={`field-card${needsReview ? ' needs-review' : ''}`}>
-                      <span>
-                        {label}
-                        <b className={needsReview ? 'warning-text' : 'good-text'}>
-                          {needsReview ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />}
-                          {confidence}%
-                        </b>
-                      </span>
-                      <input
-                        value={data[key] || ''}
-                        onChange={(event) => setData({ ...data, [key]: event.target.value })}
-                        aria-label={label}
-                      />
-                    </label>
-                  );
-                })}
-              </div>
-
-              {data.medicines?.length > 0 && (
-                <section className="list-section">
-                  <h4>Medicines</h4>
-                  {data.medicines.map((medicine, index) => (
-                    <div key={`${medicine.name}-${index}`} className="list-row">
-                      <div>
-                        <strong>{medicine.name || 'Unclear medicine name'}</strong>
-                        <p>{[medicine.dosage, medicine.instructions, medicine.duration].filter(Boolean).join(' · ') || 'No further details recorded'}</p>
-                      </div>
-                      <span className={medicine.needsReview ? 'warning-text' : 'good-text'}>{medicine.confidence}% {medicine.needsReview ? 'Review' : 'Clear'}</span>
+              <div className="upload-details"><span>Document ID</span><strong>{uploadResult.documentId}</strong><span>Type</span><strong>{documentTypes.find((type) => type.value === uploadResult.documentType)?.label}</strong></div>
+              {!extractionResult && <button className="button button-primary extraction-button" type="button" onClick={extractDocument} disabled={extracting}>{extracting ? 'Extracting securely...' : 'Extract with AI'}</button>}
+              {extractionResult && (
+                <>
+                  <div className="structured-result"><p className="eyebrow">AI-EXTRACTED PRESCRIPTION INFORMATION</p><pre>{JSON.stringify(extractionResult.extraction, null, 2)}</pre></div>
+                  <section className="educational-section">
+                    <div className="educational-heading"><p className="eyebrow">GENERAL EDUCATIONAL INFORMATION</p><h4>Terms and medicines</h4><p>This information is separate from the extracted prescription and is not a diagnosis or treatment instruction.</p></div>
+                    <div className="term-grid">
+                      {medicalTerms.map((term) => (
+                        <article className="term-card" key={term.originalTerm}>
+                          <span>Original term</span><strong>{term.originalTerm}</strong>
+                          <span>Expanded term</span><strong>{term.expandedTerm}</strong>
+                          <span>Simple meaning</span><p>{term.simpleMeaning}</p>
+                          <span>Why doctors commonly look at it</span><p>{term.whyDoctorsLookAtIt}</p>
+                        </article>
+                      ))}
                     </div>
-                  ))}
-                </section>
+                    {extractionResult.extraction.medicines?.length > 0 && <div className="medicine-info-list"><h4>Medicine information</h4>{extractionResult.extraction.medicines.map((medicine, index) => {
+                      const medicineName = medicine.name?.originalValue;
+                      const medicineKey = medicineName?.toLowerCase();
+                      const canLookup = Boolean(medicineName) && medicine.name?.confidence >= 80 && !medicine.name?.needsVerification;
+                      const information = medicineKey ? medicineInformation[medicineKey] : null;
+                      return <article className="medicine-info-card" key={`${medicineName || 'unknown'}-${index}`}><div><span>AI-extracted medicine</span><strong>{medicineName || 'Information unavailable'}</strong></div>{canLookup ? <button className="button button-secondary" type="button" onClick={() => lookupMedicineInformation(medicine)} disabled={medicineLoading[medicineKey]}>{medicineLoading[medicineKey] ? 'Checking source...' : information ? 'Refresh source' : 'Explain medicine'}</button> : <span className="verification-note">Verify medicine name before lookup</span>}{information && <div className="medicine-explanation"><span>Original term</span><p>{information.originalTerm || 'Information unavailable'}</p><span>Expanded term</span><p>{information.expandedTerm || 'Information unavailable'}</p><span>Simple meaning</span><p>{information.simpleMeaning || 'Information unavailable'}</p><span>Why doctors commonly look at it</span><p>{information.whyDoctorsLookAtIt || 'Information unavailable'}</p><small>General education from a verified medicine-information source. It is not a diagnosis or medication-change instruction.</small></div>}</article>;
+                    })}</div>}
+                  </section>
+                  {!summaryResult && <button className="button button-primary summary-button" type="button" onClick={generatePatientSummary} disabled={summaryLoading}>{summaryLoading ? 'Preparing patient summary...' : 'Generate patient-friendly summary'}</button>}
+                  {summaryResult && (
+                    <section className="patient-summary" aria-label="Patient-friendly medical summary">
+                      <div className="summary-header"><div><p className="eyebrow">PATIENT-FRIENDLY SUMMARY</p><h3>Understanding this document</h3><p>Plain-language information based only on the extracted document.</p></div><span className="upload-status-badge">Educational view</span></div>
+                      <div className="summary-overview"><p className="eyebrow">PATIENT OVERVIEW</p><h4>{summaryResult.summary.patientOverview.patientName || 'Patient name not clearly mentioned'}</h4><div><span>Age: {summaryResult.summary.patientOverview.age || 'Not clearly mentioned in the document'}</span><span>Visit date: {summaryResult.summary.patientOverview.visitDate || 'Not clearly mentioned in the document'}</span><span>Document: {summaryResult.summary.patientOverview.documentType || 'Not clearly mentioned in the document'}</span></div><p>{summaryResult.summary.patientOverview.visitSummary}</p></div>
+                      {summaryResult.summary.medicines?.length > 0 && <div className="summary-section"><p className="eyebrow">MEDICINE INFORMATION CHART</p><div className="summary-medicine-list">{summaryResult.summary.medicines.map((medicine, index) => { const information = medicineInformation[medicine.medicineName?.toLowerCase()]; return <article className="summary-medicine-card" key={`${medicine.medicineName}-${index}`}><h4>{medicine.medicineName || 'Information unavailable'}</h4><div className="summary-medicine-grid"><div><span>Common use</span><p>{information?.commonUse || 'Information unavailable'}</p></div><div><span>Prescribed dose</span><p>{medicine.prescribedDose}</p></div><div><span>When to take</span><p>{medicine.whenToTake}</p></div><div><span>Frequency</span><p>{medicine.frequency}</p></div><div><span>Duration</span><p>{medicine.duration}</p></div><div><span>Food instructions</span><p>{medicine.foodInstructions}</p></div><div><span>Important notes</span><p>{medicine.importantNotes}</p></div></div>{medicine.needsVerification && <strong className="summary-warning">Needs verification against the original document.</strong>}</article>; })}</div></div>}
+                      {summaryResult.summary.labResults?.length > 0 && <div className="summary-section"><p className="eyebrow">LABORATORY RESULTS</p><div className="summary-lab-list">{summaryResult.summary.labResults.map((result, index) => <article className="summary-lab-card" key={`${result.testName}-${index}`}><div><h4>{result.testName || 'Information unavailable'}</h4><span>{result.result || 'Information unavailable'} {result.unit || ''}</span></div><strong className="lab-status">{result.status || 'Not available'}</strong><p>Reference range: {result.referenceRange || 'Not provided in the document'}</p><p>{result.simpleMeaning || 'Information unavailable'}</p>{result.needsVerification && <strong className="summary-warning">Needs verification against the original document.</strong>}</article>)}</div></div>}
+                      {(summaryResult.summary.followUpInstructions?.length > 0 || summaryResult.summary.documentedInstructions?.length > 0) && <div className="summary-section summary-instructions"><p className="eyebrow">FOLLOW-UP AND DOCTOR'S INSTRUCTIONS</p>{summaryResult.summary.followUpInstructions?.length > 0 && <div><h4>Follow-up</h4><ul>{summaryResult.summary.followUpInstructions.map((instruction) => <li key={instruction}>{instruction}</li>)}</ul></div>}{summaryResult.summary.documentedInstructions?.length > 0 && <div><h4>Instructions documented in the source</h4><ul>{summaryResult.summary.documentedInstructions.map((instruction) => <li key={instruction}>{instruction}</li>)}</ul></div>}</div>}
+                      {summaryResult.summary.warnings?.length > 0 && <div className="summary-warning-box"><p className="eyebrow">VERIFY BEFORE RELYING ON THIS SUMMARY</p><ul>{summaryResult.summary.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+                      <p className="summary-disclaimer">{summaryResult.summary.disclaimer}</p>
+                    </section>
+                  )}
+                </>
               )}
-
-              {data.tests?.length > 0 && (
-                <section className="list-section">
-                  <h4>Tests and results</h4>
-                  {data.tests.map((test, index) => (
-                    <div key={`${test.name}-${index}`} className="list-row">
-                      <strong>{test.name}: {test.result || 'Result not recorded'}</strong>
-                      <span className={test.needsReview ? 'warning-text' : 'good-text'}>{test.confidence}%</span>
-                    </div>
-                  ))}
-                </section>
-              )}
-
-              <div className="summary-box">
-                <span>Patient summary (Hindi)</span>
-                <p>{data.hindiSummary || 'No summary was returned.'}</p>
-              </div>
-              <p className="disclaimer">AI-generated draft only. A clinician must verify the source and approve the record.</p>
+              <p className="disclaimer">{extractionResult ? 'AI-generated draft only. Verify every field against the original source before clinical use.' : 'AI extraction has not started. The original source is preserved for the next workflow step.'}</p>
             </div>
           ) : (
             <div className="empty-state">
